@@ -14,33 +14,225 @@ const FONT_COLOR   = '#ff0000';
 // ──────────────────────────────────────────────────────────────
 
 /**
- * Finds the numeric field by its label text, clicks its "edit" button,
- * then fills the spinbutton that appears.
- * Uses the *last* open spinbutton so multiple fields can be edited in sequence
- * even if earlier spinbuttons remain open.
+ * Finds the DropNumberSelector edit button by label text (properties panel,
+ * x > 1200), clicks it to open a spinbutton, fills, Enter, then closes.
+ * Uses y-proximity to target the correct spinbutton when multiple are open.
  */
 async function setNumericField(page, fieldText, value) {
-  await page.evaluate((text) => {
+  const countBefore = await page.getByRole('spinbutton').count();
+  const btnPos = await page.evaluate((text) => {
     for (const el of document.querySelectorAll('*')) {
       if (el.children.length === 0 && el.textContent?.trim() === text) {
-        // Walk up until we find a container that holds an edit button
+        const r = el.getBoundingClientRect();
+        if (r.x < 1200) continue;
         let node = el.parentElement;
         for (let i = 0; i < 5; i++) {
           const btn = node?.querySelector('button');
-          if (btn) { btn.click(); return; }
+          if (btn) {
+            const br = btn.getBoundingClientRect();
+            return { x: Math.round(br.x + br.width / 2), y: Math.round(br.y + br.height / 2) };
+          }
           node = node?.parentElement ?? null;
         }
       }
     }
+    return null;
   }, fieldText);
-  await page.waitForTimeout(200);
+  if (!btnPos) throw new Error(`Edit button not found for "${fieldText}"`);
+  await page.mouse.click(btnPos.x, btnPos.y);
+  await page.waitForTimeout(300);
+  for (let attempt = 0; attempt < 15; attempt++) {
+    await page.waitForTimeout(100);
+    if (await page.getByRole('spinbutton').count() > countBefore) break;
+  }
   const spins = page.getByRole('spinbutton');
   const count = await spins.count();
-  const spin  = spins.nth(count - 1); // always target the most-recently opened spinbutton
+  let bestIdx = count - 1, bestDist = Infinity;
+  for (let i = 0; i < count; i++) {
+    const box = await spins.nth(i).boundingBox();
+    if (box) { const dist = Math.abs(box.y - btnPos.y); if (dist < bestDist) { bestDist = dist; bestIdx = i; } }
+  }
+  const spin = spins.nth(bestIdx);
   await spin.fill(String(value));
   await spin.press('Enter');
-  await page.waitForTimeout(200);
+  await page.waitForTimeout(300);
+  await page.mouse.click(btnPos.x, btnPos.y);
+  await page.waitForTimeout(300);
 }
+
+/**
+ * Sets the font size within a section using DropNumberSelector.
+ */
+async function setFontSize(page, sectionText, value) {
+  await page.evaluate((text) => {
+    for (const el of document.querySelectorAll('*')) {
+      if (el.children.length === 0 && el.textContent?.trim() === text) {
+        const r = el.getBoundingClientRect();
+        if (r.x > 1200) { el.scrollIntoView({ block: 'center' }); return; }
+      }
+    }
+  }, sectionText);
+  await page.waitForTimeout(300);
+  const countBefore = await page.getByRole('spinbutton').count();
+  const btnPos = await page.evaluate(({ sectionText }) => {
+    let sectionY = null;
+    for (const el of document.querySelectorAll('*')) {
+      if (el.children.length === 0 && el.textContent?.trim() === sectionText) {
+        const r = el.getBoundingClientRect();
+        if (r.x > 1200) { sectionY = r.y; break; }
+      }
+    }
+    if (sectionY === null) return null;
+    const candidates = [];
+    for (const el of document.querySelectorAll('*')) {
+      if (el.children.length === 0 && el.textContent?.trim() === 'font size') {
+        const r = el.getBoundingClientRect();
+        if (r.x > 1200 && r.y > sectionY) candidates.push({ el, y: r.y, dist: r.y - sectionY });
+      }
+    }
+    candidates.sort((a, b) => a.dist - b.dist);
+    const target = candidates[0];
+    if (!target) return null;
+    let node = target.el.parentElement;
+    for (let i = 0; i < 5; i++) {
+      const btn = node?.querySelector('button');
+      if (btn) {
+        btn.scrollIntoView({ block: 'center' });
+        btn.click();
+        const br = btn.getBoundingClientRect();
+        return { x: Math.round(br.x + br.width / 2), y: Math.round(br.y + br.height / 2) };
+      }
+      node = node?.parentElement ?? null;
+    }
+    return null;
+  }, { sectionText });
+  if (!btnPos) throw new Error(`Font size edit button not found for "${sectionText}"`);
+  await page.waitForTimeout(300);
+  if (await page.getByRole('spinbutton').count() <= countBefore) {
+    await page.mouse.click(btnPos.x, btnPos.y);
+    await page.waitForTimeout(300);
+  }
+  for (let attempt = 0; attempt < 15; attempt++) {
+    await page.waitForTimeout(100);
+    if (await page.getByRole('spinbutton').count() > countBefore) break;
+  }
+  const spins = page.getByRole('spinbutton');
+  const count = await spins.count();
+  let bestIdx = count - 1, bestDist = Infinity;
+  for (let i = 0; i < count; i++) {
+    const box = await spins.nth(i).boundingBox();
+    if (box) { const dist = Math.abs(box.y - btnPos.y); if (dist < bestDist) { bestDist = dist; bestIdx = i; } }
+  }
+  const spin = spins.nth(bestIdx);
+  await spin.fill(String(value));
+  await spin.press('Enter');
+  await page.waitForTimeout(300);
+  // Close spinbutton
+  await page.evaluate(({ sectionText }) => {
+    let sectionY = null;
+    for (const el of document.querySelectorAll('*')) {
+      if (el.children.length === 0 && el.textContent?.trim() === sectionText) {
+        const r = el.getBoundingClientRect();
+        if (r.x > 1200) { sectionY = r.y; break; }
+      }
+    }
+    if (sectionY === null) return;
+    const icons = document.querySelectorAll('mat-icon');
+    let bestIcon = null, bestDist = Infinity;
+    for (const icon of icons) {
+      if (icon.textContent?.trim() === 'close') {
+        const r = icon.getBoundingClientRect();
+        if (r.x > 1200 && r.y > sectionY) {
+          const dist = r.y - sectionY;
+          if (dist < bestDist && dist < 200) { bestDist = dist; bestIcon = icon; }
+        }
+      }
+    }
+    if (bestIcon) { const btn = bestIcon.closest('button'); if (btn) btn.click(); }
+  }, { sectionText });
+  await page.waitForTimeout(300);
+}
+
+/**
+ * Sets the font color via Angular Zone.js event handlers for reliable persistence.
+ */
+async function setFontColor(page, sectionText, hexColor) {
+  await page.evaluate((text) => {
+    for (const el of document.querySelectorAll('*')) {
+      if (el.children.length === 0 && el.textContent?.trim() === text) {
+        const r = el.getBoundingClientRect();
+        if (r.x > 1200) { el.scrollIntoView({ block: 'center' }); return; }
+      }
+    }
+  }, sectionText);
+  await page.waitForTimeout(300);
+  const result = await page.evaluate(({ sectionText, hexColor }) => {
+    let sectionY = null;
+    for (const el of document.querySelectorAll('*')) {
+      if (el.children.length === 0 && el.textContent?.trim() === sectionText) {
+        const r = el.getBoundingClientRect();
+        if (r.x > 1200) { sectionY = r.y; break; }
+      }
+    }
+    if (sectionY === null) return 'section not found';
+    const colorDisplays = document.querySelectorAll('.color-display');
+    let target = null, bestDist = Infinity;
+    for (const inp of colorDisplays) {
+      const r = inp.getBoundingClientRect();
+      if (r.y > sectionY) { const dist = r.y - sectionY; if (dist < bestDist) { bestDist = dist; target = inp; } }
+    }
+    if (!target) return 'color input not found';
+    const changeListeners = target.__zone_symbol__colorPickerChangefalse;
+    const closedListeners = target.__zone_symbol__cpClosedfalse;
+    if (!changeListeners?.length || !closedListeners?.length) return 'handlers not found';
+    const changeHandler = changeListeners[0].callback('__ngUnwrap__');
+    const closedHandler = closedListeners[0].callback('__ngUnwrap__');
+    changeHandler(hexColor);
+    target.value = hexColor;
+    target.style.background = hexColor;
+    closedHandler(hexColor);
+    return 'ok';
+  }, { sectionText, hexColor });
+  if (result !== 'ok') throw new Error(`setFontColor failed for "${sectionText}": ${result}`);
+  await page.waitForTimeout(300);
+}
+
+/**
+ * Sets the font family combobox closest to a section header.
+ */
+async function setFontFamily(page, sectionText, fontName) {
+  const sectionY = await page.evaluate((text) => {
+    for (const el of document.querySelectorAll('*')) {
+      if (el.children.length === 0 && el.textContent?.trim() === text) {
+        const r = el.getBoundingClientRect();
+        if (r.x > 1200) return r.y;
+      }
+    }
+    return null;
+  }, sectionText);
+  if (sectionY === null) throw new Error(`Section "${sectionText}" not found`);
+  const comboboxes = page.locator('input[name="fontFamily"][role="combobox"]');
+  const comboCount = await comboboxes.count();
+  let bestIdx = 0, bestDist = Infinity;
+  for (let i = 0; i < comboCount; i++) {
+    const box = await comboboxes.nth(i).boundingBox();
+    if (box && box.y > sectionY) { const dist = box.y - sectionY; if (dist < bestDist) { bestDist = dist; bestIdx = i; } }
+  }
+  const combo = comboboxes.nth(bestIdx);
+  await combo.click();
+  await combo.fill('');
+  await combo.type(fontName, { delay: 50 });
+  await page.waitForTimeout(500);
+  const option = page.getByRole('option', { name: fontName });
+  if (await option.count() > 0) {
+    await option.first().click();
+  } else {
+    await combo.press('Enter');
+  }
+  await page.waitForTimeout(300);
+}
+
+// ─────────────────────────────────────────────────────────────
 
 test('add label to scene and change properties', async ({ page }) => {
   await loginAndSetup(page);
@@ -63,22 +255,49 @@ test('add label to scene and change properties', async ({ page }) => {
   await nameInput.click({ force: true, clickCount: 3 });
   await page.keyboard.press('Control+a');
   await page.keyboard.type(SCENE_NAME);
-  await page.locator('mat-dialog-container button', { hasText: /create scene/i })
-    .click({ force: true });
+  await page.evaluate(() => {
+    const dialog = document.querySelector('mat-dialog-container');
+    if (!dialog) return;
+    for (const btn of dialog.querySelectorAll('button')) {
+      if (/create scene/i.test(btn.textContent ?? '')) { btn.click(); return; }
+    }
+  });
 
-  await expect(page.getByText('toolbox')).toBeVisible({ timeout: 15000 });
-  await page.waitForTimeout(2000); // let editor fully initialise
+  await page.waitForTimeout(5000);
+  if (page.url().includes('editor/list')) {
+    await page.evaluate((name) => {
+      for (const el of document.querySelectorAll('*')) {
+        if (el.children.length === 0 && el.textContent?.trim() === name) {
+          const r = el.getBoundingClientRect();
+          if (r.width > 0) { el.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true })); return; }
+        }
+      }
+    }, SCENE_NAME);
+    await page.waitForTimeout(5000);
+  }
+  await page.waitForURL('**/editor/**', { timeout: 15000 });
+  await page.waitForTimeout(2000);
+
+  // Ensure components panel is open
+  await page.evaluate(() => {
+    for (const el of document.querySelectorAll('*')) {
+      if (el.children.length === 0 && el.textContent?.trim() === 'components') {
+        const r = el.getBoundingClientRect();
+        if (r.x < 200) { el.click(); return; }
+      }
+    }
+  });
+  await page.waitForTimeout(1000);
 
   // ─── Drag Label component from toolbox onto the canvas ───────
-  // Find the "Label" chip in the toolbox (left ~500 px of screen)
   const dragSrc = await page.evaluate(() => {
     for (const el of document.querySelectorAll('*')) {
       if (el.children.length === 0 && el.textContent?.trim() === 'Label') {
         const r = el.getBoundingClientRect();
-        if (r.x < 500 && r.y > 100 && r.width > 10 && r.height > 10) {
+        if (r.x < 700 && r.y > 100 && r.width > 10 && r.height > 10) {
           const drag = el.closest('[draggable="true"]') || el.parentElement;
-          const dr   = (drag ?? el).getBoundingClientRect();
-          if (dr.x < 500)
+          const dr = (drag ?? el).getBoundingClientRect();
+          if (dr.x < 700)
             return { x: Math.round(dr.x + dr.width / 2), y: Math.round(dr.y + dr.height / 2) };
         }
       }
@@ -87,7 +306,6 @@ test('add label to scene and change properties', async ({ page }) => {
   });
   if (!dragSrc) throw new Error('Label component not found in toolbox');
 
-  // Find the canvas drop target (centre of the editing area)
   const dropTgt = await page.evaluate(() => {
     for (const sel of ['app-screen', '.player-canvas', '[class*="viewport"]', '[class*="scene-main"]']) {
       const el = document.querySelector(sel);
@@ -100,7 +318,6 @@ test('add label to scene and change properties', async ({ page }) => {
     return { x: Math.round(window.innerWidth * 0.55), y: Math.round(window.innerHeight * 0.48) };
   });
 
-  // Slow drag so the Angular CDK drag-drop picks it up
   await page.mouse.move(dragSrc.x, dragSrc.y);
   await page.mouse.down();
   await page.waitForTimeout(400);
@@ -120,14 +337,13 @@ test('add label to scene and change properties', async ({ page }) => {
   await page.mouse.click(dropTgt.x, dropTgt.y);
   await page.waitForTimeout(500);
 
-  // Properties panel must show "layout" tab (confirms a component is selected)
   await expect(page.getByRole('button', { name: 'layout' })).toBeVisible({ timeout: 5000 });
 
   // ─── Layout: set width and height ────────────────────────────
   await page.getByRole('button', { name: 'layout' }).click();
   await page.waitForTimeout(300);
 
-  await setNumericField(page, 'width',  LABEL_WIDTH);
+  await setNumericField(page, 'width', LABEL_WIDTH);
   await setNumericField(page, 'height', LABEL_HEIGHT);
 
   // ─── Label tab: text + font properties ───────────────────────
@@ -138,43 +354,17 @@ test('add label to scene and change properties', async ({ page }) => {
   await page.getByRole('textbox', { name: 'displayed text' }).fill(LABEL_TEXT);
 
   // Font size
-  await page.locator('app-font-selector')
-    .getByRole('button').filter({ hasText: 'edit' }).click();
-  await page.waitForTimeout(200);
-  await page.getByRole('spinbutton').first().fill(String(FONT_SIZE));
-  await page.getByRole('spinbutton').first().press('Enter');
-  await page.waitForTimeout(200);
+  await setFontSize(page, 'font settings', FONT_SIZE);
 
-  // Font color — click the hex textbox to expand the colour picker, then fill
-  await page.locator('app-font-selector').getByRole('textbox').first().click();
-  await page.waitForTimeout(300);
-  const hexInput = page.locator('app-font-selector').getByRole('textbox').nth(1);
-  await hexInput.fill(FONT_COLOR);
-  await hexInput.press('Enter');
-  await page.waitForTimeout(500);
+  // Font color — use Zone.js approach for reliable persistence
+  await setFontColor(page, 'font settings', FONT_COLOR);
 
-  // Font name — click via evaluate to bypass color-picker overlay
-  await page.evaluate(() => {
-    const btns = [...document.querySelectorAll('app-font-selector button')];
-    const btn = btns.find(b => /^font$/.test(b.textContent?.trim() ?? ''));
-    btn?.click();
-  });
-  await page.getByRole('dialog').waitFor({ timeout: 5000 });
-  const filterInput = page.getByRole('textbox', { name: 'filter list...' });
-  await filterInput.clear();
-  await filterInput.pressSequentially(FONT_NAME, { delay: 50 });
-  await page.waitForTimeout(2000);
-  // Click via evaluate — virtual-scroll table may not expose the row to Playwright
-  await page.evaluate((fontName) => {
-    const cells = [...document.querySelectorAll('[role="cell"]')];
-    const cell = cells.find(c => c.textContent?.trim() === fontName);
-    cell?.click();
-  }, FONT_NAME);
-  await page.waitForTimeout(500);
-  await page.getByRole('button', { name: 'select font' }).click();
-  await page.waitForTimeout(500);
+  // Font family — use combobox autocomplete
+  await setFontFamily(page, 'font settings', FONT_NAME);
 
   // ─── Save ─────────────────────────────────────────────────────
-  await page.locator('.center-items > button:nth-child(3)').click();
-  await expect(page.getByText('Saved', { exact: true })).toBeVisible({ timeout: 5000 });
+  await page.mouse.click(700, 400);
+  await page.waitForTimeout(300);
+  await page.keyboard.press('Alt+s');
+  await expect(page.getByText('Saved', { exact: true })).toBeVisible({ timeout: 10000 });
 });

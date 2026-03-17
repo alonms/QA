@@ -146,15 +146,24 @@ test('create slide scene with weather and image', async ({ page }) => {
   }
 
   // ─── Slide 1: Add weather scene ─────────────────────────────────
-  // Click slide 1 thumbnail in left panel
-  await page.evaluate(() => {
+  // Click slide 1 thumbnail using mouse.click for Angular event propagation
+  const slide1Box = await page.evaluate(() => {
     const thumbs = document.querySelectorAll('div.slide-thumb');
-    if (thumbs.length >= 1) thumbs[0].click();
+    if (thumbs.length >= 1) {
+      const r = thumbs[0].getBoundingClientRect();
+      return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) };
+    }
+    return null;
   });
+  if (slide1Box) await page.mouse.click(slide1Box.x, slide1Box.y);
   await page.waitForTimeout(500);
 
-  // Open "scenes" sidebar (6th icon from top in far-right sidebar, ~y=454)
-  await page.mouse.click(1885, 454);
+  // Open "scenes" in far-right sidebar (DIV.menu-button)
+  await page.evaluate(() => {
+    for (const el of document.querySelectorAll('div.menu-button')) {
+      if (el.textContent?.trim() === 'scenes') { el.click(); return; }
+    }
+  });
   await page.waitForTimeout(2000);
 
   // Filter for weather scene
@@ -172,8 +181,8 @@ test('create slide scene with weather and image', async ({ page }) => {
   }
   await page.waitForTimeout(1500);
 
-  // Click add_circle_outline for the "weather scene" (Player type)
-  await page.evaluate(() => {
+  // Click add_circle_outline for the "weather scene" using mouse.click
+  const weatherAddPos = await page.evaluate(() => {
     const rows = document.querySelectorAll('tr');
     for (const row of rows) {
       const tds = row.querySelectorAll('td');
@@ -187,12 +196,14 @@ test('create slide scene with weather and image', async ({ page }) => {
       if (hasWeatherScene && hasPlayerType) {
         const addIcon = row.querySelector('mat-icon');
         if (addIcon && addIcon.textContent?.trim() === 'add_circle_outline') {
-          addIcon.click();
-          return;
+          const r = addIcon.getBoundingClientRect();
+          return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) };
         }
       }
     }
+    return null;
   });
+  if (weatherAddPos) await page.mouse.click(weatherAddPos.x, weatherAddPos.y);
   await page.waitForTimeout(2000);
 
   // ─── Slide 2: Click on the second slide thumbnail ──────────────
@@ -210,26 +221,32 @@ test('create slide scene with weather and image', async ({ page }) => {
   }
   await page.waitForTimeout(1000);
 
-  // Open "resources" sidebar (7th icon from top, ~y=523)
-  await page.mouse.click(1885, 523);
-  await page.waitForTimeout(2000);
-
-  // Click the first image's add icon (control_point) to add it to slide 2
+  // Open "resources" in far-right sidebar (DIV.menu-button)
   await page.evaluate(() => {
-    const addIcons = document.querySelectorAll('mat-icon');
-    for (const icon of addIcons) {
-      if (icon.textContent?.trim() === 'control_point') {
-        const r = icon.getBoundingClientRect();
-        if (r.x > 1200 && r.y > 200 && r.width > 0) {
-          (icon.closest('button') || icon).click();
-          return;
-        }
-      }
+    for (const el of document.querySelectorAll('div.menu-button')) {
+      if (el.textContent?.trim() === 'resources') { el.click(); return; }
     }
   });
   await page.waitForTimeout(2000);
 
+  // Click the first image's add icon (control_point) using mouse.click
+  const cpPos = await page.evaluate(() => {
+    for (const icon of document.querySelectorAll('mat-icon')) {
+      if (icon.textContent?.trim() === 'control_point') {
+        const r = icon.getBoundingClientRect();
+        if (r.x > 1200 && r.y > 200 && r.width > 0) {
+          return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) };
+        }
+      }
+    }
+    return null;
+  });
+  if (cpPos) await page.mouse.click(cpPos.x, cpPos.y);
+  await page.waitForTimeout(2000);
+
   // ─── Save ──────────────────────────────────────────────────────
+  await page.mouse.click(700, 400);
+  await page.waitForTimeout(300);
   await page.keyboard.press('Alt+s');
   await page.waitForTimeout(3000);
 

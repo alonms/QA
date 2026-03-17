@@ -30,9 +30,34 @@ test('create a new empty scene', async ({ page }) => {
   await page.keyboard.type(SCENE_NAME);
 
   // Confirm
-  await page.locator('mat-dialog-container button', { hasText: /create scene/i }).click({ force: true });
+  await page.evaluate(() => {
+    const dialog = document.querySelector('mat-dialog-container');
+    if (!dialog) return;
+    for (const btn of dialog.querySelectorAll('button')) {
+      if (/create scene/i.test(btn.textContent ?? '')) { btn.click(); return; }
+    }
+  });
 
-  // Verify scene editor opened: toolbox is visible and scene name appears in top bar
-  await expect(page.getByText('toolbox')).toBeVisible({ timeout: 10000 });
+  await page.waitForTimeout(5000);
+
+  // If still on list, double-click the scene to open it
+  if (page.url().includes('editor/list')) {
+    await page.evaluate((name) => {
+      for (const el of document.querySelectorAll('*')) {
+        if (el.children.length === 0 && el.textContent?.trim() === name) {
+          const r = el.getBoundingClientRect();
+          if (r.width > 0) {
+            el.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }));
+            return;
+          }
+        }
+      }
+    }, SCENE_NAME);
+    await page.waitForTimeout(5000);
+  }
+
+  await page.waitForURL('**/editor/**', { timeout: 15000 });
+
+  // Verify scene name appears in top bar
   await expect(page.getByText(SCENE_NAME).first()).toBeVisible({ timeout: 10000 });
 });

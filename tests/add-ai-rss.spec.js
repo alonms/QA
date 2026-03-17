@@ -240,28 +240,40 @@ test('add AI RSS feed with rock bands prompt', async ({ page }) => {
   await page.keyboard.type(SCENE_NAME);
   await page.waitForTimeout(500);
 
-  // Click "create scene" button inside dialog — use evaluate as fallback
-  const createBtn = page.locator('mat-dialog-container button', { hasText: /create scene/i });
-  if (await createBtn.count() > 0) {
-    await createBtn.click({ force: true, timeout: 5000 }).catch(() => {});
-  }
-  // Fallback: find and click via evaluate
-  await page.waitForTimeout(300);
-  if (!(await page.getByText('toolbox').isVisible().catch(() => false))) {
-    await page.evaluate(() => {
-      const dialog = document.querySelector('mat-dialog-container');
-      if (!dialog) return;
-      for (const btn of dialog.querySelectorAll('button')) {
-        if (/create scene/i.test(btn.textContent ?? '')) {
-          btn.click();
-          return;
+  // Click "create scene" button inside dialog
+  await page.evaluate(() => {
+    const dialog = document.querySelector('mat-dialog-container');
+    if (!dialog) return;
+    for (const btn of dialog.querySelectorAll('button')) {
+      if (/create scene/i.test(btn.textContent ?? '')) { btn.click(); return; }
+    }
+  });
+
+  await page.waitForTimeout(5000);
+  if (page.url().includes('editor/list')) {
+    await page.evaluate((name) => {
+      for (const el of document.querySelectorAll('*')) {
+        if (el.children.length === 0 && el.textContent?.trim() === name) {
+          const r = el.getBoundingClientRect();
+          if (r.width > 0) { el.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true })); return; }
         }
       }
-    });
+    }, SCENE_NAME);
+    await page.waitForTimeout(5000);
   }
-
-  await expect(page.getByText('toolbox')).toBeVisible({ timeout: 15000 });
+  await page.waitForURL('**/editor/**', { timeout: 15000 });
   await page.waitForTimeout(2000);
+
+  // Ensure components panel is open
+  await page.evaluate(() => {
+    for (const el of document.querySelectorAll('*')) {
+      if (el.children.length === 0 && el.textContent?.trim() === 'components') {
+        const r = el.getBoundingClientRect();
+        if (r.x < 200) { el.click(); return; }
+      }
+    }
+  });
+  await page.waitForTimeout(1000);
 
   // ─── Drag Rss component from toolbox onto the canvas ──────────
   const dragSrc = await page.evaluate(() => {
@@ -514,6 +526,6 @@ test('add AI RSS feed with rock bands prompt', async ({ page }) => {
   }
 
   // ─── Save ─────────────────────────────────────────────────────
-  await page.locator('.center-items > button:nth-child(3)').click();
+  await page.keyboard.press('Alt+s');
   await expect(page.getByText('Saved', { exact: true })).toBeVisible({ timeout: 10000 });
 });

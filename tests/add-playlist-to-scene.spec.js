@@ -12,60 +12,49 @@ const BIRDS_DURATION    = 5;
 // ──────────────────────────────────────────────────────────────
 
 /**
- * Finds the numeric field by its label text, clicks its "edit" button,
- * then fills the spinbutton that appears.
+ * Finds the DropNumberSelector edit button by label text (properties panel,
+ * x > 1200), clicks it to open a spinbutton, fills, Enter, then closes.
+ * Uses y-proximity to target the correct spinbutton when multiple are open.
  */
 async function setNumericField(page, fieldText, value) {
-  const before = await page.getByRole('spinbutton').count();
-
-  await page.evaluate((text) => {
-    // Find the visible label element
-    let labelEl = null;
+  const countBefore = await page.getByRole('spinbutton').count();
+  const btnPos = await page.evaluate((text) => {
     for (const el of document.querySelectorAll('*')) {
       if (el.children.length === 0 && el.textContent?.trim() === text) {
         const r = el.getBoundingClientRect();
-        if (r.y >= 0 && r.y <= window.innerHeight && r.width > 0) {
-          labelEl = el;
-          break;
+        if (r.x < 1200) continue;
+        let node = el.parentElement;
+        for (let i = 0; i < 5; i++) {
+          const btn = node?.querySelector('button');
+          if (btn) {
+            const br = btn.getBoundingClientRect();
+            return { x: Math.round(br.x + br.width / 2), y: Math.round(br.y + br.height / 2) };
+          }
+          node = node?.parentElement ?? null;
         }
       }
     }
-    if (!labelEl) return;
-
-    const labelRect = labelEl.getBoundingClientRect();
-
-    // Find the nearest "edit" icon button by y-coordinate proximity
-    const editBtns = [...document.querySelectorAll('button')].filter(b => {
-      const icon = b.querySelector('mat-icon');
-      return icon && icon.textContent?.trim() === 'edit';
-    });
-    let bestBtn = null;
-    let bestDist = Infinity;
-    for (const btn of editBtns) {
-      const br = btn.getBoundingClientRect();
-      if (br.y < 0 || br.y > window.innerHeight) continue;
-      const dist = Math.abs(br.y - labelRect.y);
-      if (dist < bestDist) {
-        bestDist = dist;
-        bestBtn = btn;
-      }
-    }
-    if (bestBtn) { bestBtn.click(); return; }
-
-    // Fallback: walk up from label and click first button
-    let node = labelEl.parentElement;
-    for (let i = 0; i < 3; i++) {
-      const btn = node?.querySelector('button');
-      if (btn) { btn.click(); return; }
-      node = node?.parentElement ?? null;
-    }
+    return null;
   }, fieldText);
+  if (!btnPos) throw new Error(`Edit button not found for "${fieldText}"`);
+  await page.mouse.click(btnPos.x, btnPos.y);
   await page.waitForTimeout(300);
-
-  const after = await page.getByRole('spinbutton').count();
-  const spin = page.getByRole('spinbutton').nth(after > before ? after - 1 : before - 1);
+  for (let attempt = 0; attempt < 15; attempt++) {
+    await page.waitForTimeout(100);
+    if (await page.getByRole('spinbutton').count() > countBefore) break;
+  }
+  const spins = page.getByRole('spinbutton');
+  const count = await spins.count();
+  let bestIdx = count - 1, bestDist = Infinity;
+  for (let i = 0; i < count; i++) {
+    const box = await spins.nth(i).boundingBox();
+    if (box) { const dist = Math.abs(box.y - btnPos.y); if (dist < bestDist) { bestDist = dist; bestIdx = i; } }
+  }
+  const spin = spins.nth(bestIdx);
   await spin.fill(String(value));
   await spin.press('Enter');
+  await page.waitForTimeout(300);
+  await page.mouse.click(btnPos.x, btnPos.y);
   await page.waitForTimeout(300);
 }
 
@@ -105,20 +94,59 @@ test('add playlist to scene and configure content', async ({ page }) => {
   await nameInput.click({ force: true, clickCount: 3 });
   await page.keyboard.press('Control+a');
   await page.keyboard.type(SCENE_NAME);
-  await page.locator('mat-dialog-container button', { hasText: /create scene/i })
-    .click({ force: true });
+  await page.evaluate(() => {
+    const dialog = document.querySelector('mat-dialog-container');
+    if (!dialog) return;
+    for (const btn of dialog.querySelectorAll('button')) {
+      if (/create scene/i.test(btn.textContent ?? '')) { btn.click(); return; }
+    }
+  });
 
-  await expect(page.getByText('toolbox')).toBeVisible({ timeout: 15000 });
+  await page.waitForTimeout(5000);
+  if (page.url().includes('editor/list')) {
+    await page.evaluate((name) => {
+      for (const el of document.querySelectorAll('*')) {
+        if (el.children.length === 0 && el.textContent?.trim() === name) {
+          const r = el.getBoundingClientRect();
+          if (r.width > 0) { el.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true })); return; }
+        }
+      }
+    }, SCENE_NAME);
+    await page.waitForTimeout(5000);
+  }
+  await page.waitForURL('**/editor/**', { timeout: 15000 });
   await page.waitForTimeout(2000);
 
+  // Ensure components panel is open
+  await page.evaluate(() => {
+    for (const el of document.querySelectorAll('*')) {
+      if (el.children.length === 0 && el.textContent?.trim() === 'components') {
+        const r = el.getBoundingClientRect();
+        if (r.x < 200) { el.click(); return; }
+      }
+    }
+  });
+  await page.waitForTimeout(1000);
+
   // ─── Drag Playlist component from toolbox onto the canvas ────
+  // Scroll Playlist into view in the toolbox
+  await page.evaluate(() => {
+    for (const el of document.querySelectorAll('*')) {
+      if (el.children.length === 0 && el.textContent?.trim() === 'Playlist') {
+        const r = el.getBoundingClientRect();
+        if (r.x < 700 && r.width > 10) { el.scrollIntoView({ block: 'center' }); return; }
+      }
+    }
+  });
+  await page.waitForTimeout(500);
+
   const dragSrc = await page.evaluate(() => {
     for (const el of document.querySelectorAll('*')) {
       if (el.children.length === 0 && el.textContent?.trim() === 'Playlist') {
         const r = el.getBoundingClientRect();
-        if (r.x < 700 && r.y > 100 && r.width > 10 && r.height > 10) {
+        if (r.x < 700 && r.y > 50 && r.y < window.innerHeight && r.width > 10 && r.height > 10) {
           const drag = el.closest('[draggable="true"]') || el.parentElement;
-          const dr   = (drag ?? el).getBoundingClientRect();
+          const dr = (drag ?? el).getBoundingClientRect();
           if (dr.x < 700)
             return { x: Math.round(dr.x + dr.width / 2), y: Math.round(dr.y + dr.height / 2) };
         }
@@ -128,7 +156,6 @@ test('add playlist to scene and configure content', async ({ page }) => {
   });
   if (!dragSrc) throw new Error('Playlist component not found in toolbox');
 
-  // Drop at canvas centre (position will be set precisely via layout fields)
   const dropTgt = await page.evaluate(() => {
     for (const sel of ['app-screen', '.player-canvas', '[class*="viewport"]', '[class*="scene-main"]']) {
       const el = document.querySelector(sel);
@@ -141,7 +168,6 @@ test('add playlist to scene and configure content', async ({ page }) => {
     return { x: Math.round(window.innerWidth * 0.55), y: Math.round(window.innerHeight * 0.48) };
   });
 
-  // Slow drag so Angular CDK drag-drop picks it up
   await page.mouse.move(dragSrc.x, dragSrc.y);
   await page.mouse.down();
   await page.waitForTimeout(400);
@@ -157,7 +183,6 @@ test('add playlist to scene and configure content', async ({ page }) => {
   await page.mouse.up();
   await page.waitForTimeout(1500);
 
-  // Click the dropped component to select it
   await page.mouse.click(dropTgt.x, dropTgt.y);
   await page.waitForTimeout(500);
 
@@ -167,7 +192,7 @@ test('add playlist to scene and configure content', async ({ page }) => {
   await page.getByRole('button', { name: 'layout' }).click();
   await page.waitForTimeout(300);
 
-  await setNumericField(page, 'width',  PLAYLIST_WIDTH);
+  await setNumericField(page, 'width', PLAYLIST_WIDTH);
   await setNumericField(page, 'height', PLAYLIST_HEIGHT);
   await setNumericField(page, 'X', 50);
   await setNumericField(page, 'Y', 50);
@@ -212,7 +237,13 @@ test('add playlist to scene and configure content', async ({ page }) => {
   await page.waitForTimeout(500);
 
   // Click insert
-  await page.getByRole('button', { name: /insert/i }).click({ force: true });
+  await page.evaluate(() => {
+    const dialog = document.querySelector('mat-dialog-container');
+    if (!dialog) return;
+    for (const btn of dialog.querySelectorAll('button')) {
+      if (/insert/i.test(btn.textContent ?? '')) { btn.click(); return; }
+    }
+  });
   await page.waitForTimeout(1000);
 
   // ─── Add "birds" scene ───────────────────────────────────────
@@ -250,7 +281,13 @@ test('add playlist to scene and configure content', async ({ page }) => {
   await page.waitForTimeout(500);
 
   // Click insert
-  await page.getByRole('button', { name: /insert/i }).click({ force: true });
+  await page.evaluate(() => {
+    const dialog = document.querySelector('mat-dialog-container');
+    if (!dialog) return;
+    for (const btn of dialog.querySelectorAll('button')) {
+      if (/insert/i.test(btn.textContent ?? '')) { btn.click(); return; }
+    }
+  });
   await page.waitForTimeout(1000);
 
   // ─── Change "birds" entry duration to 5 ──────────────────────
@@ -287,6 +324,8 @@ test('add playlist to scene and configure content', async ({ page }) => {
   }
 
   // ─── Save ─────────────────────────────────────────────────────
-  await page.locator('.center-items > button:nth-child(3)').click();
-  await expect(page.getByText('Saved', { exact: true })).toBeVisible({ timeout: 5000 });
+  await page.mouse.click(700, 400);
+  await page.waitForTimeout(300);
+  await page.keyboard.press('Alt+s');
+  await expect(page.getByText('Saved', { exact: true })).toBeVisible({ timeout: 10000 });
 });

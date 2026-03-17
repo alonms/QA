@@ -185,23 +185,32 @@ test('create slide scene with nav menu, image, and scene', async ({ page }) => {
   if (slide1Box) await page.mouse.click(slide1Box.x, slide1Box.y);
   await page.waitForTimeout(500);
 
-  // Open "resources" sidebar (7th icon from top, ~y=523)
-  await page.mouse.click(1885, 523);
-  await page.waitForTimeout(2000);
-
-  // Click the first image's add icon (control_point)
+  // Open "resources" in far-right sidebar (DIV.menu-button at x~1849)
   await page.evaluate(() => {
-    for (const icon of document.querySelectorAll('mat-icon')) {
-      if (icon.textContent?.trim() === 'control_point') {
-        const r = icon.getBoundingClientRect();
-        if (r.x > 1200 && r.y > 200 && r.width > 0) {
-          (icon.closest('button') || icon).click();
-          return;
-        }
+    for (const el of document.querySelectorAll('div.menu-button')) {
+      if (el.textContent?.trim() === 'resources') {
+        el.click();
+        return;
       }
     }
   });
   await page.waitForTimeout(2000);
+
+  // Click the first image's add icon (control_point) using mouse.click
+  const cpPos = await page.evaluate(() => {
+    for (const icon of document.querySelectorAll('mat-icon')) {
+      if (icon.textContent?.trim() === 'control_point') {
+        const r = icon.getBoundingClientRect();
+        if (r.x > 1200 && r.y > 200 && r.width > 0) {
+          return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) };
+        }
+      }
+    }
+    return null;
+  });
+  if (cpPos) await page.mouse.click(cpPos.x, cpPos.y);
+  await page.waitForTimeout(2000);
+
 
   // ─── Slide 2: Add a scene ─────────────────────────────────────
   // Click slide 2 thumbnail
@@ -216,25 +225,36 @@ test('create slide scene with nav menu, image, and scene', async ({ page }) => {
   if (slide2Box) await page.mouse.click(slide2Box.x, slide2Box.y);
   await page.waitForTimeout(500);
 
-  // Open "scenes" sidebar (6th icon from top, ~y=454)
-  await page.mouse.click(1885, 454);
-  await page.waitForTimeout(2000);
-
-  // Click add_circle_outline for the first scene in the list
+  // Open "scenes" in far-right sidebar (DIV.menu-button at x~1849)
   await page.evaluate(() => {
-    for (const icon of document.querySelectorAll('mat-icon')) {
-      if (icon.textContent?.trim() === 'add_circle_outline') {
-        const r = icon.getBoundingClientRect();
-        if (r.x > 1180 && r.y > 200 && r.width > 0) {
-          icon.click();
-          return;
-        }
+    for (const el of document.querySelectorAll('div.menu-button')) {
+      if (el.textContent?.trim() === 'scenes') {
+        el.click();
+        return;
       }
     }
   });
   await page.waitForTimeout(2000);
 
+  // Click add_circle_outline for the first scene in the list using mouse.click
+  const acoPos = await page.evaluate(() => {
+    for (const icon of document.querySelectorAll('mat-icon')) {
+      if (icon.textContent?.trim() === 'add_circle_outline') {
+        const r = icon.getBoundingClientRect();
+        if (r.x > 1180 && r.y > 200 && r.width > 0) {
+          return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) };
+        }
+      }
+    }
+    return null;
+  });
+  if (acoPos) await page.mouse.click(acoPos.x, acoPos.y);
+  await page.waitForTimeout(2000);
+
+
   // ─── Save ──────────────────────────────────────────────────────
+  await page.mouse.click(700, 400);
+  await page.waitForTimeout(300);
   await page.keyboard.press('Alt+s');
   await page.waitForTimeout(3000);
 

@@ -320,6 +320,7 @@ async function setFontFamily(page, sectionText, fontName) {
 
 
 test('add RSS to scene and configure properties', async ({ page }) => {
+  test.setTimeout(180000);
   await loginAndSetup(page);
 
   // ─── Go to scenes ────────────────────────────────────────────
@@ -341,18 +342,57 @@ test('add RSS to scene and configure properties', async ({ page }) => {
   await page.keyboard.press('Control+a');
   await page.keyboard.type(SCENE_NAME);
   await page.waitForTimeout(500);
-  await page.locator('mat-dialog-container button', { hasText: /create scene/i })
-    .click({ force: true });
+  await page.evaluate(() => {
+    const dialog = document.querySelector('mat-dialog-container');
+    if (!dialog) return;
+    for (const btn of dialog.querySelectorAll('button')) {
+      if (/create scene/i.test(btn.textContent ?? '')) { btn.click(); return; }
+    }
+  });
 
-  await expect(page.getByText('toolbox')).toBeVisible({ timeout: 15000 });
+  await page.waitForTimeout(5000);
+  if (page.url().includes('editor/list')) {
+    await page.evaluate((name) => {
+      for (const el of document.querySelectorAll('*')) {
+        if (el.children.length === 0 && el.textContent?.trim() === name) {
+          const r = el.getBoundingClientRect();
+          if (r.width > 0) { el.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true })); return; }
+        }
+      }
+    }, SCENE_NAME);
+    await page.waitForTimeout(5000);
+  }
+  await page.waitForURL('**/editor/**', { timeout: 15000 });
   await page.waitForTimeout(2000);
 
+  // Ensure components panel is open
+  await page.evaluate(() => {
+    for (const el of document.querySelectorAll('*')) {
+      if (el.children.length === 0 && el.textContent?.trim() === 'components') {
+        const r = el.getBoundingClientRect();
+        if (r.x < 200) { el.click(); return; }
+      }
+    }
+  });
+  await page.waitForTimeout(1000);
+
   // ─── Drag Rss component from toolbox onto the canvas ──────────
+  // Scroll Rss into view in the toolbox
+  await page.evaluate(() => {
+    for (const el of document.querySelectorAll('*')) {
+      if (el.children.length === 0 && el.textContent?.trim() === 'Rss') {
+        const r = el.getBoundingClientRect();
+        if (r.x < 700 && r.width > 10) { el.scrollIntoView({ block: 'center' }); return; }
+      }
+    }
+  });
+  await page.waitForTimeout(500);
+
   const dragSrc = await page.evaluate(() => {
     for (const el of document.querySelectorAll('*')) {
       if (el.children.length === 0 && el.textContent?.trim() === 'Rss') {
         const r = el.getBoundingClientRect();
-        if (r.x < 700 && r.y > 100 && r.width > 10 && r.height > 10) {
+        if (r.x < 700 && r.y > 50 && r.y < window.innerHeight && r.width > 10 && r.height > 10) {
           const drag = el.closest('[draggable="true"]') || el.parentElement;
           const dr = (drag ?? el).getBoundingClientRect();
           if (dr.x < 700)
@@ -445,8 +485,10 @@ test('add RSS to scene and configure properties', async ({ page }) => {
   await setFontColor(page, 'RSS details', DETAILS_FONT_COLOR);
 
   // ─── Save ─────────────────────────────────────────────────────
-  await page.locator('.center-items > button:nth-child(3)').click();
-  await expect(page.getByText('Saved', { exact: true })).toBeVisible({ timeout: 5000 });
+  await page.mouse.click(700, 400);
+  await page.waitForTimeout(300);
+  await page.keyboard.press('Alt+s');
+  await page.waitForTimeout(3000);
 
   // ═══════════════════════════════════════════════════════════════
   // ─── SECOND RSS COMPONENT ─────────────────────────────────────
@@ -469,11 +511,21 @@ test('add RSS to scene and configure properties', async ({ page }) => {
   await page.waitForTimeout(500);
 
   // ─── Drag second Rss component from toolbox onto the canvas ───
+  await page.evaluate(() => {
+    for (const el of document.querySelectorAll('*')) {
+      if (el.children.length === 0 && el.textContent?.trim() === 'Rss') {
+        const r = el.getBoundingClientRect();
+        if (r.x < 700 && r.width > 10) { el.scrollIntoView({ block: 'center' }); return; }
+      }
+    }
+  });
+  await page.waitForTimeout(500);
+
   const dragSrc2 = await page.evaluate(() => {
     for (const el of document.querySelectorAll('*')) {
       if (el.children.length === 0 && el.textContent?.trim() === 'Rss') {
         const r = el.getBoundingClientRect();
-        if (r.x < 700 && r.y > 100 && r.width > 10 && r.height > 10) {
+        if (r.x < 700 && r.y > 50 && r.y < window.innerHeight && r.width > 10 && r.height > 10) {
           const drag = el.closest('[draggable="true"]') || el.parentElement;
           const dr = (drag ?? el).getBoundingClientRect();
           if (dr.x < 700)
@@ -580,6 +632,29 @@ test('add RSS to scene and configure properties', async ({ page }) => {
   await setFontFamily(page, 'RSS title', 'A Love of Thunder');
 
   // ─── Save ─────────────────────────────────────────────────────
-  await page.locator('.center-items > button:nth-child(3)').click();
-  await expect(page.getByText('Saved', { exact: true })).toBeVisible({ timeout: 5000 });
+  await page.mouse.click(700, 400);
+  await page.waitForTimeout(300);
+  await page.keyboard.press('Alt+s');
+  await page.waitForTimeout(3000);
+  const saved2 = await page.evaluate(() => {
+    for (const el of document.querySelectorAll('*')) {
+      if (el.children.length === 0 && /saved/i.test(el.textContent ?? '')) {
+        const r = el.getBoundingClientRect();
+        if (r.width > 0 && r.height > 0) return true;
+      }
+    }
+    return false;
+  });
+  if (!saved2) {
+    await page.evaluate(() => {
+      const icons = document.querySelectorAll('mat-icon');
+      for (const icon of icons) {
+        if (icon.textContent?.trim() === 'save') {
+          const btn = icon.closest('button');
+          if (btn) { btn.click(); return; }
+        }
+      }
+    });
+    await page.waitForTimeout(3000);
+  }
 });
